@@ -70,3 +70,16 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .analysis-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 12px 0; }
 .analysis-bar { flex: 1; border-radius: 4px 4px 0 0; background: var(--brand); min-width: 24px; position: relative; transition: height 0.4s; }
 .analysis-bar span { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
+/* 代理降级决策与代理分配台账 */
+.sub-panel { margin-top: 16px; }
+.degradation-banner { background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; color: #92400e; }
+.check-banner { background: #ecfdf3; border: 1px solid #22c55e; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; color: #166534; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.alloc-等待中 { background: #fef9c3; color: #854d0e; }
+.alloc-已恢复 { background: #dcfce7; color: #166534; }
+.alloc-已失败 { background: #fee2e2; color: #991b1b; }
+.decision-生效中 { background: #fef9c3; color: #854d0e; }
+.decision-已恢复 { background: #dcfce7; color: #166534; }
+.decision-已替换 { background: #e2e8f0; color: #475569; }
+.deg-message { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.deg-checkbox { width: auto; }

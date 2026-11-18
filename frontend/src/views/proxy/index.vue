@@ -56,6 +56,96 @@
       </tbody>
     </table>
 
+    <section class="sub-panel" data-testid="degradation-panel">
+      <header class="page-head">
+        <div>
+          <h3>代理降级决策数据集</h3>
+          <p class="page-desc">读取空池与检测失败生成降级决策：任务进入可控等待或指定替代区域；重复送交只写入一份，落库失败同一事务回退。</p>
+        </div>
+      </header>
+
+      <div v-if="activeDecision" class="degradation-banner" data-testid="degradation-banner">
+        空池提示：{{ activeDecision.空池原因 }} · 最近检测批次 {{ activeDecision.最近检测批次 }} · 检测时点 {{ activeDecision.检测时点 }}
+        · 策略：{{ activeDecision.降级策略 }}<template v-if="activeDecision.替代区域 && activeDecision.替代区域 !== '—'">（{{ activeDecision.替代区域 }}）</template>
+      </div>
+
+      <form class="analysis-form" @submit.prevent="submitDetection">
+        <label>
+          <span>批次号（留空自动生成）</span>
+          <input v-model="detectionBatch" data-testid="deg-batch" placeholder="CHK-0001" />
+        </label>
+        <label>
+          <span>数据版本</span>
+          <select v-model="detectionVersion" data-testid="deg-version">
+            <option>冻结版</option>
+            <option>最新版</option>
+          </select>
+        </label>
+        <label v-for="row in rows" :key="String(row.id)">
+          <span>{{ row.节点编号 }} 检测结论</span>
+          <select v-model="detectionResults[String(row.节点编号)]" :data-testid="`deg-node-${row.节点编号}`">
+            <option>未检测</option>
+            <option>存活</option>
+            <option>失效</option>
+          </select>
+        </label>
+        <label>
+          <span>模拟落库失败</span>
+          <input v-model="simulateFail" type="checkbox" data-testid="deg-fail" class="deg-checkbox" />
+        </label>
+        <button class="btn primary" type="submit" data-testid="deg-submit">提交检测并生成降级决策</button>
+        <button class="btn" type="button" data-testid="deg-all-dead" @click="markAll('失效')">全部置为失效</button>
+        <button class="btn" type="button" data-testid="deg-all-alive" @click="markAll('存活')">全部置为存活</button>
+      </form>
+
+      <table class="data-table" data-testid="degradation-table">
+        <thead>
+          <tr>
+            <th>决策编号</th>
+            <th>空池原因</th>
+            <th>最近检测批次</th>
+            <th>检测时点</th>
+            <th>降级策略</th>
+            <th>替代区域</th>
+            <th>影响任务数</th>
+            <th>校验结论</th>
+            <th>数据版本</th>
+            <th>血缘</th>
+            <th>状态</th>
+            <th>可执行动作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="dec in decisions" :key="String(dec.id)" :data-testid="`deg-row-${dec.id}`" :data-status="String(dec.status)">
+            <td>{{ dec.决策编号 }}</td>
+            <td>{{ dec.空池原因 }}</td>
+            <td>{{ dec.最近检测批次 }}</td>
+            <td>{{ dec.检测时点 }}</td>
+            <td>{{ dec.降级策略 }}</td>
+            <td>{{ dec.替代区域 }}</td>
+            <td>{{ dec.影响任务数 }}</td>
+            <td>{{ dec.校验结论 }}</td>
+            <td>{{ dec.数据版本 }}</td>
+            <td>{{ dec.血缘 }}</td>
+            <td><span class="badge" :class="`decision-${dec.status}`">{{ dec.status }}</span></td>
+            <td class="row-actions">
+              <button
+                v-if="dec.status === '生效中'"
+                class="link"
+                type="button"
+                :data-testid="`deg-recover-${dec.id}`"
+                @click="recoverDecision(dec)"
+              >确认恢复</button>
+            </td>
+          </tr>
+          <tr v-if="!decisions.length">
+            <td colspan="12" class="empty-state" data-testid="degradation-empty">暂无数据可重试</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-if="degMessage" class="deg-message" data-testid="deg-message">{{ degMessage }}</p>
+    </section>
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记代理节点</h3>
@@ -105,6 +195,73 @@ const stats = computed(() => [
   { label: metricNames[1], value: rows.value.filter((row) => row.status === statuses[1]).length },
   { label: metricNames[2], value: rows.value.filter((row) => row.status === statuses[statuses.length - 1]).length },
 ])
+
+// 代理降级决策数据集
+const decisions = ref<Row[]>([])
+const degMessage = ref('')
+const detectionBatch = ref('')
+const detectionVersion = ref('冻结版')
+const simulateFail = ref(false)
+const detectionResults = ref<Record<string, string>>({})
+const activeDecision = computed(() => decisions.value.find((dec) => dec.status === '生效中'))
+
+function markAll(conclusion: string) {
+  for (const row of rows.value) {
+    detectionResults.value[String(row.节点编号)] = conclusion
+  }
+}
+
+async function submitDetection() {
+  degMessage.value = ''
+  try {
+    const results = rows.value.map((row) => ({
+      节点编号: row.节点编号,
+      检测结论: detectionResults.value[String(row.节点编号)] ?? '未检测',
+    }))
+    const response = await request(`${ENDPOINT}/degradation`, {
+      method: 'POST',
+      body: JSON.stringify({
+        批次号: detectionBatch.value,
+        数据版本: detectionVersion.value,
+        模拟落库失败: simulateFail.value,
+        结果: results,
+      }),
+    })
+    const payload = await response.json()
+    degMessage.value = payload.message || ''
+    if (!response.ok || !payload.ok) return
+    detectionBatch.value = ''
+    await Promise.all([reload(), reloadDecisions()])
+  } catch (error) {
+    degMessage.value = error instanceof Error ? error.message : '检测提交失败'
+  }
+}
+
+async function recoverDecision(dec: Row) {
+  degMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/degradation/${dec.id}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action: '确认恢复' }),
+    })
+    const payload = await response.json()
+    degMessage.value = payload.message || ''
+    await reloadDecisions()
+  } catch (error) {
+    degMessage.value = error instanceof Error ? error.message : '确认恢复失败'
+  }
+}
+
+async function reloadDecisions() {
+  try {
+    const response = await request(`${ENDPOINT}/degradation`)
+    if (!response.ok) throw new Error('代理降级决策数据集读取失败')
+    const payload = await response.json()
+    decisions.value = payload.items ?? []
+  } catch (error) {
+    degMessage.value = error instanceof Error ? error.message : '代理降级决策数据集读取失败'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -179,10 +336,17 @@ async function reload() {
     const payload = await response.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    for (const row of rows.value) {
+      const key = String(row.节点编号)
+      if (!(key in detectionResults.value)) detectionResults.value[key] = '未检测'
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '代理池列表读取失败'
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  void reloadDecisions()
+})
 </script>

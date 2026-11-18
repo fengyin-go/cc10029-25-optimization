@@ -41,6 +41,35 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/degradation", response_model=PageResult[dict])
+def list_degradation(
+    status: str | None = Query(default=None, description="生效中、已恢复、已替换"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=200),
+) -> PageResult[dict]:
+    """代理降级决策数据集：沿用统一分页返回结构；为空时由代理池页面展示空态（暂无数据可重试）。"""
+    items, total = service.list_decisions(status=status, page=page, size=size)
+    return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.post("/degradation", response_model=ActionResult)
+def submit_detection(payload: dict[str, object]) -> ActionResult:
+    """提交检测批次并生成代理降级决策数据集；重复送交只写入一份，后续请求读取已存在结果。"""
+    entry, message = service.submit_detection(payload)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.post("/degradation/{decision_id}/actions", response_model=ActionResult)
+def run_decision_action(decision_id: int, payload: ActionPayload) -> ActionResult:
+    """对降级决策执行确认恢复；恢复条件不满足时说明中断原因。"""
+    entry, message = service.decision_action(decision_id, payload.action.strip(), payload.remark)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)
+
+
 @router.get("/export")
 def export_entries(
     request: Request,

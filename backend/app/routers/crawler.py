@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from app.schemas import ActionPayload, ActionResult, EntryPayload
+from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
 from app.services.crawler import CrawlerService
 
 router = APIRouter(prefix="/api/crawler", tags=["爬虫引擎"])
@@ -28,6 +28,26 @@ def csv_cell(value: Any) -> str:
 def list_entries() -> dict[str, Any]:
     items = service.get_timeline()
     return {"items": items}
+
+
+@router.get("/allocations", response_model=PageResult[dict])
+def list_allocations(
+    status: str | None = Query(default=None, description="等待中、已恢复、已失败"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=100, ge=1, le=500),
+) -> PageResult[dict]:
+    """代理分配记录台账：等待任务与已恢复任务状态分离，校验结论同步自代理降级决策数据集。"""
+    items, total = service.list_allocations(status=status, page=page, size=size)
+    return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.post("/allocations/{allocation_id}/actions", response_model=ActionResult)
+def run_allocation_action(allocation_id: int, payload: ActionPayload) -> ActionResult:
+    """标记失败 / 请求重放：已失败的请求不能无提示地重放，必须携带重放说明。"""
+    entry, message = service.allocation_action(allocation_id, payload.action.strip(), payload.remark)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)
 
 
 @router.get("/export")
